@@ -355,25 +355,27 @@ def self_train(args ,pre_snapshot_path, snapshot_path):
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
 
-            img_a, img_b = volume_batch[:labeled_sub_bs], volume_batch[labeled_sub_bs:args.labeled_bs]
+            img_a, img_b = volume_batch[:labeled_sub_bs], volume_batch[labeled_sub_bs:args.labeled_bs]#将输入的批次数据volume_batch和label_batch分成两部分，分别是标记的数据（img_a、img_b 和 lab_a、lab_b）和未标记的数据（uimg_a、uimg_b 和 ulab_a、ulab_b）。
             uimg_a, uimg_b = volume_batch[args.labeled_bs:args.labeled_bs + unlabeled_sub_bs], volume_batch[args.labeled_bs + unlabeled_sub_bs:]
             ulab_a, ulab_b = label_batch[args.labeled_bs:args.labeled_bs + unlabeled_sub_bs], label_batch[args.labeled_bs + unlabeled_sub_bs:]
             lab_a, lab_b = label_batch[:labeled_sub_bs], label_batch[labeled_sub_bs:args.labeled_bs]
-            with torch.no_grad():
-                pre_a = ema_model(uimg_a)
+            #这里label_sub_bs是标记的数据的数量，unlabeled_sub_bs是未标记的数据的数量.
+            with torch.no_grad():#表示接下来的操作不需要进行梯度，这可以节省计算资源。
+                pre_a = ema_model(uimg_a)#首先使用ema_model对未标记的图像数据uimg_a和uimg_b进行预测，得到预测结果pre_a和pre_b。
                 pre_b = ema_model(uimg_b)
-                plab_a = get_ACDC_masks(pre_a, nms=1)
+                plab_a = get_ACDC_masks(pre_a, nms=1)#然后调用get_ACDC_masks函数对预测结果进行处理，得到处理后的预测标签plab_a和plab_b。
                 plab_b = get_ACDC_masks(pre_b, nms=1)
-                img_mask, loss_mask = generate_mask(img_a)
-                unl_label = ulab_a * img_mask + lab_a * (1 - img_mask)
-                l_label = lab_b * img_mask + ulab_b * (1 - img_mask)
-            consistency_weight = get_current_consistency_weight(iter_num//150)
+                img_mask, loss_mask = generate_mask(img_a)#接下来用generate_mask函数生成一个掩码img_mask和损失掩码loss_mask。
+                unl_label = ulab_a * img_mask + lab_a * (1 - img_mask)#这个掩码用于将标记的标签和未标记的标签进行混合，生成新的标签unl_label和l_label。
+                l_label = lab_b * img_mask + ulab_b * (1 - img_mask)#具体来说，unl_label是ulab_a和lab_a的混合，l_label是lab_b和ulab_b的混合。在这个混合的过程中，img_mask的值为0的地方使用lab_a和ulab_b的值，img_mask的值为1的地方使用ulab_a和lab_b的值。
+            consistency_weight = get_current_consistency_weight(iter_num//150)#调用get_current_consistency_weight函数获取当前的一致性权重consistency_weight。这个权重可能用于计算一致性损失，一致性损失通常用于半监督学习中，用于约束模型对标记数据和为标记数据的预测结果应该是一致的。
 
-            net_input_unl = uimg_a * img_mask + img_a * (1 - img_mask)
-            net_input_l = img_b * img_mask + uimg_b * (1 - img_mask)
-            out_unl = model(net_input_unl)
+            #下面这段代码主要用于处理半监督学习中的输入数据，并计算损失
+            net_input_unl = uimg_a * img_mask + img_a * (1 - img_mask)#这行代码用于将未标记的图像数据uimg_a和img_a进行混合，生成新的输入数据net_input_unl和net_input_l。
+            net_input_l = img_b * img_mask + uimg_b * (1 - img_mask)#这行代码用于将标记的图像数据img_b和未标记的图像数据uimg_b进行混合，生成新的输入数据net_input_l。
+            out_unl = model(net_input_unl)#然后使用model对未标记的输入数据net_input_unl和net_input_l进行预测，得到预测结果out_unl和out_l。
             out_l = model(net_input_l)
-            unl_dice, unl_ce = mix_loss(out_unl, plab_a, lab_a, loss_mask, u_weight=args.u_weight, unlab=True)
+            unl_dice, unl_ce = mix_loss(out_unl, plab_a, lab_a, loss_mask, u_weight=args.u_weight, unlab=True)#接下来调用mix_loss函数计算未标记数据的损失unl_dice和unl_ce，这个函数的输入是预测结果out_unl、预测标签plab_a、标签lab_a、损失掩码loss_mask和权重u_weight。
             l_dice, l_ce = mix_loss(out_l, lab_b, plab_b, loss_mask, u_weight=args.u_weight)
 
 
